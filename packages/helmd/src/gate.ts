@@ -16,6 +16,15 @@ import { getActiveProfileId, profileStatus, setActiveProfileId, type ProfileStat
 import { startDeviceFlow, verifyStar, type DeviceSession } from './star-gate.js'
 
 const REPO = 'ADWMC/helm-d'
+// [local fork] Upstream asks the operator to star the repository through a
+// GitHub device flow rendered in the web panel. That flow is opt-in here:
+// without HELMD_STAR_GATE=1 no device code is requested, the panel receives no
+// gate status (nothing to render), and the persona is never affected — it never
+// was. Set the variable to restore upstream behavior.
+function starGateEnabled(): boolean {
+  const value = process.env.HELMD_STAR_GATE?.trim().toLowerCase()
+  return value === '1' || value === 'true' || value === 'yes'
+}
 // Own namespace: the preset's dsh-persona row registers the empty
 // 'deployment:persona-prefix' section, and same-name re-registration is
 // rejected ("already registered in this scope"). A distinct name coexists.
@@ -73,11 +82,13 @@ export function skipThisLaunch(): void {
 
 /** Whether the gate is actively gating assemblies (locked AND not skipped). */
 export function isGating(): boolean {
-  return gateRegistered && !isUnlocked() && !launchSkipped
+  return starGateEnabled() && gateRegistered && !isUnlocked() && !launchSkipped
 }
 
 /** Status snapshot for the web gate panel (GET /api/helmd/gate). */
-export function gateStatus(): Record<string, unknown> {
+export function gateStatus(): Record<string, unknown> | null {
+  // [local fork] Gate off by default: no device flow, no popup payload.
+  if (!starGateEnabled()) return null
   const state = readState()
   if (!gateRegistered) {
     return {
@@ -116,7 +127,7 @@ export function gateStatus(): Record<string, unknown> {
 
 /** Operator explicitly asks for a fresh device code after a hold or an error
  *  backoff. Clears the skip flag so the panel can reappear. */
-export function retryFlow(): Record<string, unknown> {
+export function retryFlow(): Record<string, unknown> | null {
   hold = undefined
   launchSkipped = false
   lastFlowError = undefined
@@ -124,6 +135,8 @@ export function retryFlow(): Record<string, unknown> {
   nextFlowAt = 0
   activeSession = undefined
   pollAbort?.abort()
+  // [local fork] With the gate disabled there is nothing to retry.
+  if (!starGateEnabled()) return null
   return gateStatus()
 }
 
@@ -197,6 +210,8 @@ export function backoffMs(failures: number): number {
  *  Network failures back off (30s → 60s → 120s → 240s → 5min); an authorized
  *  session that never saw a star holds instead of issuing a fresh code. */
 function ensureFlow(): void {
+  // [local fork] Never start a device flow unless the gate was explicitly enabled.
+  if (!starGateEnabled()) return
   if (hold !== undefined) return
   if (Date.now() < nextFlowAt) return
   if (activeSession !== undefined && Date.now() < activeSession.expiresAt) return

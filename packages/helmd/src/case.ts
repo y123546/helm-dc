@@ -4,7 +4,7 @@
 
 import { createHash } from 'node:crypto'
 import { createReadStream, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { mkdir, copyFile, writeFile, appendFile, readFile, readdir, rename } from 'node:fs/promises'
+import { mkdir, copyFile, writeFile, appendFile, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 
@@ -84,6 +84,39 @@ export function casesRoot(root?: string): string {
   return resolve(base, 'helmd-cases')
 }
 
+/**
+ * Delete case directories under `<root>/helmd-cases` older than
+ * `HELMD_CASE_RETENTION_DAYS` (default 30; `0` disables retention). Cases whose
+ * CASE.md still says `status: open` are always kept, so an investigation that
+ * spans weeks never loses its workspace. Runs opportunistically when a new case
+ * starts, which keeps the tool surface unchanged (no extra tool, no startup cost).
+ * @returns the names that were removed.
+ */
+export async function pruneOldCases(root?: string, keep?: string): Promise<string[]> {
+  const raw = process.env.HELMD_CASE_RETENTION_DAYS
+  const days = raw === undefined || raw.trim() === '' ? 30 : Number(raw)
+  if (!Number.isFinite(days) || days <= 0) return []
+  const base = casesRoot(root)
+  if (!existsSync(base)) return []
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+  const removed: string[] = []
+  for (const entry of await readdir(base, { withFileTypes: true }).catch(() => [])) {
+    if (!entry.isDirectory() || entry.name === keep) continue
+    const dir = join(base, entry.name)
+    const caseFile = join(dir, 'CASE.md')
+    // An open case is work in progress regardless of age.
+    if (existsSync(caseFile)) {
+      const head = readFileSync(caseFile, 'utf8').split('\n', 8).join('\n')
+      if (/^status:\s*open\b/m.test(head)) continue
+    }
+    const info = await stat(dir).catch(() => undefined)
+    if (info === undefined || info.mtimeMs >= cutoff) continue
+    await rm(dir, { recursive: true, force: true }).catch(() => undefined)
+    if (!existsSync(dir)) removed.push(entry.name)
+  }
+  return removed
+}
+
 export function slugify(text: string, max = 48): string {
   const clean = text
     .replace(/[\\/:\*\?"<>\|]+/g, ' ')
@@ -127,6 +160,12 @@ export async function createCaseDir(opts: {
   scope?: string[]
 }): Promise<CaseInfo> {
   const base = casesRoot(opts.root)
+  // Retention runs here (not at startup) so it only ever touches the directory
+  // this case is about to live in, and only when the operator actually works.
+  const pruned = await pruneOldCases(opts.root).catch(() => [] as string[])
+  if (pruned.length > 0) {
+    console.log(`[helmd] pruned ${String(pruned.length)} expired case(s): ${pruned.slice(0, 5).join(', ')}`)
+  }
   const hint = slugify(opts.goal || basename(opts.samples[0] ?? ''))
   let name = `${today()}-${hint}`
   for (let i = 2; existsSync(join(base, name)); i++) name = `${today()}-${hint}-${i}`

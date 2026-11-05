@@ -38,10 +38,50 @@ async function httpGet(url: string): Promise<{ status: number; headers: Record<s
   return { status: response.status, headers: {}, body: response.text.slice(0, 512 * 1024) }
 }
 
+/**
+ * DoH resolvers tried in order until one answers, overridable with
+ * HELMD_DOH_PROVIDERS (comma-separated hostnames). dns.google used to be the
+ * only endpoint, which made this tool time out on networks where it is
+ * unreachable; the mainland-reachable resolvers now come first and Google is
+ * the last fallback.
+ */
+const DOH_PROVIDERS = ['doh.pub', 'dns.alidns.com', 'cloudflare-dns.com', 'dns.google']
+const DOH_TIMEOUT_MS = 6000
+
+interface DohAnswer { name?: string; data?: string; type?: number }
+
+function dohProviders(): string[] {
+  const override = process.env.HELMD_DOH_PROVIDERS?.split(',').map((value) => value.trim()).filter(Boolean)
+  return override !== undefined && override.length > 0 ? override : DOH_PROVIDERS
+}
+
+/** First usable JSON answer across the provider chain, with a per-provider timeout. */
+async function dohQuery(domain: string): Promise<{ provider: string; text: string; answers: DohAnswer[] }> {
+  const failures: string[] = []
+  for (const host of dohProviders()) {
+    const url = `https://${host}/resolve?name=${encodeURIComponent(domain)}&type=A`
+    try {
+      const response = await Promise.race([
+        requestText(url, { method: 'GET', headers: { accept: 'application/dns-json' } }),
+        new Promise<never>((_resolve, reject) => {
+          const timer = setTimeout(() => { reject(new Error(`timeout after ${String(DOH_TIMEOUT_MS)} ms`)) }, DOH_TIMEOUT_MS)
+          timer.unref()
+        }),
+      ])
+      const parsed = JSON.parse(response.text) as { Status?: number; Answer?: DohAnswer[] }
+      if (typeof parsed.Status !== 'number') throw new Error('not a DNS JSON answer')
+      return { provider: host, text: response.text, answers: parsed.Answer ?? [] }
+    } catch (error) {
+      failures.push(`${host}: ${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  throw new Error(`no DoH provider answered (${failures.join('; ')})`)
+}
+
 export function registerReconTools(ctx: Context): void {
   ctx.tools.register(defineTool({
     name: 'recon_passive',
-    description: 'Passive recon via DNS-over-HTTPS (A/AAAA) for one in-scope domain. Read-only; no port scan.',
+    description: 'Passive recon via DNS-over-HTTPS (A records) for one in-scope domain. Tries doh.pub, AliDNS, Cloudflare, then dns.google; override with HELMD_DOH_PROVIDERS. Read-only; no port scan.',
     parameters: {
       domain: { type: 'string', required: true, description: 'In-scope domain, e.g. example.com.' },
       lab: { type: 'boolean', description: 'Allow private/loopback targets (authorized lab only).' },
@@ -50,13 +90,9 @@ export function registerReconTools(ctx: Context): void {
     async execute(args: { domain: string; lab?: boolean }, exec?: ExecLike) {
       const domain = args.domain.trim().toLowerCase()
       const { dir } = requireScope(exec, domain, args.lab === true)
-      const response = await requestText(`https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=A`, {
-        method: 'GET', headers: { accept: 'application/dns-json' },
-      })
-      const evidenceId = await saveRaw(dir, 'recon_dns', response.text)
-      let parsed: { Answer?: Array<{ name?: string; data?: string; type?: number }> } = {}
-      try { parsed = JSON.parse(response.text) as typeof parsed } catch { /* non-JSON DoH error */ }
-      const rows = (parsed.Answer ?? []).filter((answer) => answer.type === 1 && typeof answer.data === 'string')
+      const { provider, text, answers } = await dohQuery(domain)
+      const evidenceId = await saveRaw(dir, 'recon_dns', `# provider: ${provider}\n${text}`)
+      const rows = answers.filter((answer) => answer.type === 1 && typeof answer.data === 'string')
       addAsset(dir, { kind: 'domain', value: domain, source: 'doh', evidenceId })
       addAssets(dir, rows.map((answer) => ({
         kind: 'host' as const,
@@ -65,7 +101,7 @@ export function registerReconTools(ctx: Context): void {
         source: 'doh',
         evidenceId,
       })))
-      return [`recon_passive ${domain}: ${rows.length} A record(s)`, `evidence: ${evidenceId}`, coverageLine(loadAssets(dir))].join('\n')
+      return [`recon_passive ${domain}: ${rows.length} A record(s) via ${provider}`, `evidence: ${evidenceId}`, coverageLine(loadAssets(dir))].join('\n')
     },
   }))
 
