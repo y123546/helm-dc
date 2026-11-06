@@ -150,15 +150,6 @@ exports.apply = function apply(ctx) {
 
 		const [hovered, setHovered] = React.useState(false);
 		const [active, setActive] = React.useState(false);
-
-		// If no preset is associated, follow AgentPresetLabel contract and return null
-		if (preset === undefined) return null;
-
-		// Only helm-d sessions get a workbench capsule. Other presets keep the
-		// official AgentPresetLabel untouched: this registration deliberately
-		// uses its own id instead of shadowing `agent-preset`.
-		if (preset !== "helmd") return null;
-
 		const [open, setOpen] = React.useState(false);
 		const rootRef = React.useRef(null);
 
@@ -182,6 +173,19 @@ exports.apply = function apply(ctx) {
 				document.removeEventListener("keydown", handleKeyDown, true);
 			};
 		}, [open]);
+
+		// Hooks above must stay unconditional. The preset projection arrives
+		// asynchronously, so this component renders first with `preset`
+		// undefined (2 hooks) and then with "helmd" (5 hooks); returning before
+		// the later hooks made React throw error #300 and took down the whole
+		// session header, which looked like the app closing.
+		// If no preset is associated, follow AgentPresetLabel contract and return null
+		if (preset === undefined) return null;
+
+		// Only helm-d sessions get a workbench capsule. Other presets keep the
+		// official AgentPresetLabel untouched: this registration deliberately
+		// uses its own id instead of shadowing `agent-preset`.
+		if (preset !== "helmd") return null;
 
 		// The right sidebar is the primary workbench surface. The popover is only
 		// a fallback for hosts without the sidebarRight service — opening both at
