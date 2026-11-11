@@ -68,7 +68,7 @@ It is **not** an engine patch: no on-disk changes to approvals or the sandbox, a
 **Requirements**: Node >= 22.19 and the [`dsh`](https://github.com/deepseek-ai/deepseek-harness) CLI.
 
 ```bash
-dsh plugin --profile web add https://github.com/ADWMC/helm-d/releases/download/v0.5.3/helm-d.tgz
+dsh plugin --profile web add https://github.com/ADWMC/helm-d/releases/download/v0.6.0/helm-d.tgz
 dsh web
 ```
 
@@ -213,20 +213,20 @@ See [architecture](docs/architecture.md) and [design principles](docs/principles
 
 | Item | Requirement |
 |---|---|
-| DSH | 0.2.x (this release tested on `0.2.1-rc.2`) |
+| DSH | every published version in `0.2.0-rc.1` – `0.2.2-rc.1` (preset generation/repair and workbench UI tokens regression-tested across the whole interval; runtime cold-start not executed on each of the 15 hosts) |
 | Node | `>= 22.19.0` |
 | Platform | Windows uses `pwsh`; Linux / macOS use `bash`; WSL via `wsl.exe` |
 
 ```bash
 # Update: remove first, then install the target version (never latest/download)
 dsh plugin --profile web remove @adwmc/helm-d
-dsh plugin --profile web add https://github.com/ADWMC/helm-d/releases/download/v0.5.3/helm-d.tgz
+dsh plugin --profile web add https://github.com/ADWMC/helm-d/releases/download/v0.6.0/helm-d.tgz
 
 # Uninstall
 dsh plugin --profile web remove @adwmc/helm-d
 ```
 
-Replace `v0.5.3` with the target Release tag; do not use `releases/latest/download/*` as a profile dependency.
+Replace `v0.6.0` with the target Release tag; do not use `releases/latest/download/*` as a profile dependency.
 
 ## Docs
 

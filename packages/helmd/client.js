@@ -174,11 +174,6 @@ exports.apply = function apply(ctx) {
 			};
 		}, [open]);
 
-		// Hooks above must stay unconditional. The preset projection arrives
-		// asynchronously, so this component renders first with `preset`
-		// undefined (2 hooks) and then with "helmd" (5 hooks); returning before
-		// the later hooks made React throw error #300 and took down the whole
-		// session header, which looked like the app closing.
 		// If no preset is associated, follow AgentPresetLabel contract and return null
 		if (preset === undefined) return null;
 
