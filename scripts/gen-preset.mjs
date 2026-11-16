@@ -442,13 +442,15 @@ function presetMeta() {
     if (!exists(c)) continue
     const text = readFileSync(c, 'utf8')
     const order = text.match(/^order:\s*(\d+)\s*$/m)
+    const name = text.match(/^name:\s*(.+?)\s*$/m)
     const description = text.match(/^description:\s*(.+?)\s*$/m)
     return {
       order: order ? Number(order[1]) : null,
+      name: name ? name[1] : null,
       description: description ? description[1] : null,
     }
   }
-  return { order: null, description: null }
+  return { order: null, name: null, description: null }
 }
 
 /** Retarget the host entry header at our preset: `- id: preset-helmd`, config `id: helmd`. */
@@ -467,6 +469,10 @@ function rewriteEntryHeader(header, meta) {
       out.push(line)
     } else if (inConfig && (m = line.match(/^(\s*)id: \S+$/))) {
       out.push(`${m[1]}id: helmd`)
+      if (meta.name) {
+        const n = /^["']/.test(meta.name) ? meta.name : JSON.stringify(meta.name)
+        out.push(`${m[1]}name: ${n}`)
+      }
       if (meta.description) {
         const d = /^["']/.test(meta.description) ? meta.description : JSON.stringify(meta.description)
         out.push(`${m[1]}description: ${d}`)
